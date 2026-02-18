@@ -3,6 +3,9 @@
 
 requests
 
+streamlit
+pandas
+openai
 python-dotenv
 
 ```
