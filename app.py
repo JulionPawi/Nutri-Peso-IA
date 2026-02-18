@@ -22,6 +22,7 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 def load_data():
     df_p = pd.read_csv('CANASTA_BASICA_CON_ETIQUETAS.csv')
     df_n = pd.read_csv('ProductosMexicanos.csv')
+    # Conversión vital para que la IA entienda el tiempo
     df_p['ds'] = pd.to_datetime(df_p['ds'])
     return df_p, df_n
 
@@ -66,8 +67,7 @@ st.title("🥗 NutriPeso IA: Tu Estratega de Ahorro y Salud")
 if "messages" not in st.session_state:
     saludo = (
         f"¡Hola {nombre}! 👋 Soy NutriPeso IA. "
-        f"Basado en tu perfil, necesitas **{int(cal_meta)} kcal/día**. "
-        "¿Analizamos precios de la carne, armamos una receta o vemos qué comprar para estoquear? 🛒"
+        f"Necesitas **{int(cal_meta)} kcal/día**. ¿Buscamos una receta o quieres saber qué productos de tu dieta subirán de precio en 2026? 🛒"
     )
     st.session_state.messages = [{"role": "assistant", "content": saludo}]
 
@@ -83,7 +83,7 @@ if prompt := st.chat_input("Escribe aquí…"):
 
     with st.chat_message("assistant"):
 
-        # --- A. CLASIFICACIÓN (GPT-4o-mini) ---
+        # --- A. CLASIFICACIÓN (Detección de intención) ---
         intent = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "system", "content": SYSTEM_CLASSIFIER}, {"role": "user", "content": prompt}]
@@ -99,61 +99,60 @@ if prompt := st.chat_input("Escribe aquí…"):
 
             if res_api and "hits" in res_api and len(res_api["hits"]) > 0:
                 receta = res_api["hits"][0]["recipe"]
-                dieta_info = f"RECETA: {receta.get('label')}\nCalorías: {int(receta.get('calories'))}"
+                dieta_info = f"RECETA: {receta.get('label')}\nIngredientes: {', '.join(receta.get('ingredientLines', [])[:5])}"
                 plan_actual["items"] = receta.get("label", "").upper().split()
             else:
                 tipo = "vegana" if "VEGAN" in prompt.upper() else objetivo
                 plan_actual = DIETAS_BASE.get(tipo, DIETAS_BASE["perder_peso"])
-                dieta_info = f"PLAN: {plan_actual.get('nombre')}\nSugerencia: {plan_actual.get('sugerencia')}"
+                dieta_info = f"PLAN LOCAL: {plan_actual.get('nombre')}\nSugerencia: {plan_actual.get('sugerencia')}"
 
-        # --- C. BÚSQUEDA Y FILTRO DE RELEVANCIA (16 CORTES -> TOP 8 BARATOS) ---
-        raw_terms = plan_actual.get("items") if plan_actual.get("items") else prompt.split()
-        keywords = [w.upper() for w in raw_terms if len(w) > 3]
-        search_pattern = "|".join(keywords)
+        # --- C. MOTOR DE BÚSQUEDA ROBUSTO (CSV) ---
+        raw_words = []
+        if plan_actual.get("items"): raw_words.extend(plan_actual["items"])
+        raw_words.extend(prompt.split())
 
-        if search_pattern:
+        stop_words = ["QUIERO", "GUSTA", "GUSTARIA", "AGRADARIA", "PONLE", "QUITA", "BUSCA", "DIETA", "RECETA", "PARA", "ESTA", "OTRO", "TIPO"]
+        keywords = [w.upper().replace(",", "").replace(".", "") for w in raw_words if len(w) > 3 and w.upper() not in stop_words]
+
+        df_res = pd.DataFrame()
+        if keywords:
+            search_pattern = "|".join(keywords)
             df_res = df_p[df_p["unique_id"].str.contains(search_pattern, case=False, na=False)]
-            
-            if df_res.empty:
-                nombres = df_p["unique_id"].unique().tolist()
-                main_word = keywords[-1] if keywords else ""
-                cercanos = difflib.get_close_matches(main_word, nombres, n=3, cutoff=0.3)
-                df_res = df_p[df_p["unique_id"].isin(cercanos)]
-            
-            # Ordenar por fecha para ver predicciones 2026 arriba
+
+            if len(df_res["unique_id"].unique()) < 3:
+                nombres_csv = df_p["unique_id"].unique().tolist()
+                for k in keywords:
+                    matches = difflib.get_close_matches(k, nombres_csv, n=3, cutoff=0.4)
+                    df_res = pd.concat([df_res, df_p[df_p["unique_id"].isin(matches)]]).drop_duplicates()
+
+        if not df_res.empty:
             df_res = df_res.sort_values(by=["unique_id", "ds"], ascending=[True, False])
-            
-            # Agrupar y tomar 6 registros por producto
             df_final_contexto = df_res.groupby("unique_id").head(6)
 
-            # Lógica de seguridad para múltiples cortes (ej. 16 cortes de res)
-            productos_encontrados = df_final_contexto["unique_id"].unique()
-            if len(productos_encontrados) > 8:
-                # Seleccionamos solo los 8 con el precio promedio más bajo
+            if len(df_final_contexto["unique_id"].unique()) > 8:
                 top_economicos = df_final_contexto.groupby("unique_id")["y"].mean().nsmallest(8).index
                 df_final_contexto = df_final_contexto[df_final_contexto["unique_id"].isin(top_economicos)]
             
             contexto_precios = df_final_contexto.to_string(index=False)
         else:
-            contexto_precios = "No se encontraron datos de precios."
+            contexto_precios = "No hay datos para: " + ", ".join(keywords)
 
-        # --- D. RESPUESTA FINAL CON ESTRATEGIA DE COMPRA ---
+        # --- D. RESPUESTA FINAL CON ESTRATEGIA ---
         final_system = SYSTEM_ESTRATEGA.format(
             nombre=nombre, objetivo=objetivo, calorias=int(cal_meta), macros=macros, dieta_info=dieta_info
         )
-        
         final_system += """
-        \nESTRATEGIA DE SUMINISTROS:
-        1. Si las 'Predicciones' muestran alza > 5%, recomienda COMPRAR STOCK (3-4 meses) de inmediato.
-        2. Si el precio bajará, recomienda COMPRA MÍNIMA MENSUAL.
-        3. Si hay muchos cortes parecidos, enfócate en recomendar el más económico del listado.
+        \nREGLAS DE ORO:
+        1. Si el usuario rechaza un alimento (ej: pollo), ignora los datos de pollo y busca opciones en los datos de 'CARNE' o 'RES' proporcionados.
+        2. Analiza las 'Predicciones' 2026: Si el precio sube, recomienda stock (3-4 meses). Si baja, recomienda compra mínima.
+        3. Siempre menciona el nombre exacto del corte de carne encontrado en los datos.
         """
 
         full_response = client.chat.completions.create(
             model="gpt-4o",
             messages=[
                 {"role": "system", "content": final_system},
-                {"role": "system", "content": f"DATOS DE PRECIOS FILTRADOS (TOP 8 ECONÓMICOS):\n{contexto_precios}"},
+                {"role": "system", "content": f"CONTEXTO DE PRECIOS ACTUALIZADO:\n{contexto_precios}"},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.4
