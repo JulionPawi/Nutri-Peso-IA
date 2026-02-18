@@ -82,7 +82,7 @@ if prompt := st.chat_input("Ej: ¿Qué puedo cenar para ganar músculo?"):
             messages=[{"role":"system","content":SYSTEM_CLASSIFIER},{"role":"user","content":prompt}]
         ).choices[0].message.content.upper()
 
-        # B. Lógica de Dietas y Recetas (Híbrido API + Local)
+        # B. Lógica de Dietas y Recetas (Híbrido API + Local con Protección)
         dieta_info = "Sin plan específico seleccionado."
         
         if "DIETA" in intent or "COMER" in prompt.upper() or "RECETA" in prompt.upper():
@@ -93,12 +93,19 @@ if prompt := st.chat_input("Ej: ¿Qué puedo cenar para ganar músculo?"):
             
             if res_api and "hits" in res_api and len(res_api["hits"]) > 0:
                 receta = res_api["hits"][0]["recipe"]
-                dieta_info = f"RECETA DE API: {receta['label']}. Calorías: {int(receta['calories'])}. Ingredientes: {', '.join(receta['ingredientLines'][:5])}. Link: {receta['url']}"
+                dieta_info = f"RECETA DE API: {receta.get('label', 'Sin nombre')}. Calorías: {int(receta.get('calories', 0))}. Ingredientes: {', '.join(receta.get('ingredientLines', [])[:5])}. Link: {receta.get('url', '#')}"
             else:
                 # 2. Si falla la API, usar tu biblioteca local (biblioteca_dietas.py)
                 tipo = "vegana" if "VEGAN" in prompt.upper() else objetivo
-                plan = DIETAS_BASE.get(tipo, DIETAS_BASE["perder_peso"])
-                dieta_info = f"PLAN LOCAL: {plan['nombre']}. Sugerencia: {plan['sugerencia']}. Tips: {plan['tips']}"
+                # .get() evita el KeyError si el tipo de dieta no existe
+                plan = DIETAS_BASE.get(tipo, DIETAS_BASE.get("perder_peso", {}))
+                
+                # PROTECCIÓN TOTAL: Usamos .get() para cada campo
+                nombre_p = plan.get('nombre', 'Plan General')
+                sugerencia_p = plan.get('sugerencia', 'Consulta disponibilidad')
+                tips_p = plan.get('tips', 'Mantén una dieta balanceada')
+                
+                dieta_info = f"PLAN LOCAL: {nombre_p}. Sugerencia: {sugerencia_p}. Tips: {tips_p}"
 
         # C. Búsqueda de Precios en CSV
         # Buscamos la primera palabra del prompt para mayor coincidencia
