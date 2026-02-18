@@ -5,125 +5,154 @@ import os
 from dotenv import load_dotenv
 import difflib
 
-# --- IMPORTACIONES DE TUS MÓDULOS ---
+# --- IMPORTACIONES DE ARCHIVOS LOCALES ---
 from calculators import calcular_mifflin_st_jeor, distribuir_macros
-from prompts import SYSTEM_CLASSIFIER, SYSTEM_ESTRATEGA
-from api_dieta import NutriAPI
+from prompts import SYSTEM_CLASSIFIER, SYSTEM_ESTRATEGA, SYSTEM_CONCEPTUAL
 from biblioteca_dietas import DIETAS_BASE
+from api_dieta import NutriAPI
 
-# --- CONFIGURACIÓN ---
-st.set_page_config(page_title="NutriPeso IA Pro", page_icon="🥗", layout="wide")
+# -------------------------------------------------------------
+# 1. CONFIGURACIÓN GENERAL
+# -------------------------------------------------------------
+st.set_page_config(page_title="NutriPeso IA", page_icon="🥗", layout="wide")
 load_dotenv()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 @st.cache_data
 def load_data():
     df_p = pd.read_csv('CANASTA_BASICA_CON_ETIQUETAS.csv')
+    df_n = pd.read_csv('ProductosMexicanos.csv')
+    # Conversión vital para que la IA entienda el tiempo
     df_p['ds'] = pd.to_datetime(df_p['ds'])
-    return df_p
+    return df_p, df_n
 
-df_p = load_data()
+df_p, df_n = load_data()
 
-# --- SIDEBAR: CÁLCULOS REALES ---
+# -------------------------------------------------------------
+# 2. SIDEBAR – Perfil nutricional
+# -------------------------------------------------------------
 with st.sidebar:
-    st.header("🏃 Mi Perfil")
-    nombre = st.text_input("Nombre:", "Julio")
-    peso = st.number_input("Peso (kg):", 40.0, 160.0, 75.0)
-    altura = st.number_input("Altura (cm):", 120, 230, 170)
+    st.header("🏃 Mi Perfil Físico")
+    nombre = st.text_input("¿Cómo te llamas?", "Julio")
+
+    col_p, col_a = st.columns(2)
+    with col_p:
+        peso = st.number_input("Peso (kg):", 40.0, 160.0, 75.0)
+    with col_a:
+        altura = st.number_input("Altura (cm):", 120, 230, 170)
+
     edad = st.number_input("Edad:", 15, 90, 25)
     genero = st.radio("Género:", ["H", "M"], horizontal=True)
-    nivel_actividad = st.select_slider("Actividad:", options=[1.2, 1.375, 1.55, 1.725])
+
+    nivel_actividad = st.select_slider(
+        "Actividad física:",
+        options=[1.2, 1.375, 1.55, 1.725],
+        format_func=lambda x: {1.2: "Sedentario", 1.375: "Ligero", 1.55: "Moderado", 1.725: "Intenso"}[x]
+    )
+
     objetivo = st.selectbox("Objetivo:", ["perder_peso", "ganar_musculo"])
 
     cal_meta = calcular_mifflin_st_jeor(peso, altura, edad, genero, nivel_actividad)
     macros = distribuir_macros(cal_meta, objetivo)
-    st.success(f"🔥 Meta: {int(cal_meta)} kcal")
 
-# --- MEMORIA DE SESIÓN ---
+    st.markdown("---")
+    st.success(f"🔥 Meta diaria: {int(cal_meta)} kcal")
+    st.write(f"Prot: {int(macros['proteina'])}g | Grasas: {int(macros['grasas'])}g | Carbs: {int(macros['carbs'])}g")
+
+# -------------------------------------------------------------
+# 3. INTERFAZ DEL CHAT
+# -------------------------------------------------------------
+st.title("🥗 NutriPeso IA: Tu Estratega de Ahorro y Salud")
+
 if "messages" not in st.session_state:
-    st.session_state.messages = [{"role": "assistant", "content": f"¡Hola {nombre}! Soy tu estratega. ¿Qué cocinamos hoy?"}]
-if "ultimo_plan" not in st.session_state:
-    st.session_state.ultimo_plan = None
+    saludo = (
+        f"¡Hola {nombre}! 👋 Soy NutriPeso IA. "
+        f"Necesitas **{int(cal_meta)} kcal/día**. ¿Buscamos una receta o quieres saber qué productos de tu dieta subirán de precio en 2026? 🛒"
+    )
+    st.session_state.messages = [{"role": "assistant", "content": saludo}]
 
-# --- CHAT INTERFACE ---
 for msg in st.session_state.messages:
     st.chat_message(msg["role"]).write(msg["content"])
 
+# -------------------------------------------------------------
+# 4. LÓGICA PRINCIPAL DEL CHAT
+# -------------------------------------------------------------
 if prompt := st.chat_input("Escribe aquí…"):
     st.session_state.messages.append({"role": "user", "content": prompt})
     st.chat_message("user").write(prompt)
 
     with st.chat_message("assistant"):
-        # 1. CLASIFICACIÓN (Detección de intención)
+
+        # --- A. CLASIFICACIÓN (Detección de intención) ---
         intent = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "system", "content": SYSTEM_CLASSIFIER}, {"role": "user", "content": prompt}]
         ).choices[0].message.content.upper()
 
-        # 2. MOTOR DE DIETAS (API + Local)
-        dieta_info = "Buscando opciones..."
-        keywords_para_csv = prompt.upper().split()
+        # --- B. LÓGICA DE DIETAS ---
+        dieta_info, plan_actual = "Sin plan específico.", {}
 
-        if any(word in intent for word in ["DIETA", "RECETA", "COMER"]):
+        if any(word in intent for word in ["DIETA", "COMER", "RECETA", "CENA", "GASTAR"]):
             api_nutri = NutriAPI()
-            # Buscamos en la API con un rango calórico por comida
-            rango_cal = f"{int(cal_meta/4)}-{int(cal_meta/2)}"
+            rango_cal = f"{int(cal_meta/4)}-{int(cal_meta/3)}"
             res_api = api_nutri.buscar_recetas(prompt, rango_cal)
 
-            if res_api and res_api.get("hits"):
+            if res_api and "hits" in res_api and len(res_api["hits"]) > 0:
                 receta = res_api["hits"][0]["recipe"]
-                dieta_info = f"RECETA API: {receta.get('label')}. Ingredientes: {', '.join(receta.get('ingredientLines', [])[:5])}"
-                # Extraemos ingredientes de la receta para buscarlos en el CSV de precios
-                keywords_para_csv.extend(receta.get('label', '').upper().split())
+                dieta_info = f"RECETA: {receta.get('label')}\nIngredientes: {', '.join(receta.get('ingredientLines', [])[:5])}"
+                plan_actual["items"] = receta.get("label", "").upper().split()
             else:
-                plan_base = DIETAS_BASE.get(objetivo, DIETAS_BASE["perder_peso"])
-                dieta_info = f"PLAN LOCAL: {plan_base['nombre']}. {plan_base['sugerencia']}"
-                keywords_para_csv.extend(plan_base.get("items", []))
+                tipo = "vegana" if "VEGAN" in prompt.upper() else objetivo
+                plan_actual = DIETAS_BASE.get(tipo, DIETAS_BASE["perder_peso"])
+                dieta_info = f"PLAN LOCAL: {plan_actual.get('nombre')}\nSugerencia: {plan_actual.get('sugerencia')}"
 
-        # 3. MOTOR HÍBRIDO DE BÚSQUEDA (CSV PRECIOS)
-        # A. Expansión Forzada (Carne de Res)
-        if "RES" in keywords_para_csv or "CARNE" in keywords_para_csv:
-            keywords_para_csv.extend(["BISTEC", "VACUNO", "AGUJAS", "CHAMBARETE", "MOLIDA"])
+        # --- C. MOTOR DE BÚSQUEDA ROBUSTO (CSV) ---
+        raw_words = []
+        if plan_actual.get("items"): raw_words.extend(plan_actual["items"])
+        raw_words.extend(prompt.split())
 
-        # B. Limpieza de Stopwords
-        stop_words = ["QUIERO", "DAME", "ESTE", "PLAN", "TIPO", "PARA", "CON", "UNAS"]
-        keywords = [w for w in keywords_para_csv if len(w) > 3 and w not in stop_words]
+        stop_words = ["QUIERO", "GUSTA", "GUSTARIA", "AGRADARIA", "PONLE", "QUITA", "BUSCA", "DIETA", "RECETA", "PARA", "ESTA", "OTRO", "TIPO"]
+        keywords = [w.upper().replace(",", "").replace(".", "") for w in raw_words if len(w) > 3 and w.upper() not in stop_words]
 
-        # C. Filtro de Categoría y Fuzzy Search
-        df_res = df_p.copy()
-        # Lógica de exclusión de la versión nueva
-        es_bebida = any(w in prompt.upper() for w in ["COCA", "JUGO", "BEBIDA", "AGUA"])
-        
-        if es_bebida:
-            df_res = df_res[df_res["unique_id"].str.contains("COLA|AGUA|JUGO|BEBIDA", case=False, na=False)]
+        df_res = pd.DataFrame()
+        if keywords:
+            search_pattern = "|".join(keywords)
+            df_res = df_p[df_p["unique_id"].str.contains(search_pattern, case=False, na=False)]
+
+            if len(df_res["unique_id"].unique()) < 3:
+                nombres_csv = df_p["unique_id"].unique().tolist()
+                for k in keywords:
+                    matches = difflib.get_close_matches(k, nombres_csv, n=3, cutoff=0.4)
+                    df_res = pd.concat([df_res, df_p[df_p["unique_id"].isin(matches)]]).drop_duplicates()
+
+        if not df_res.empty:
+            df_res = df_res.sort_values(by=["unique_id", "ds"], ascending=[True, False])
+            df_final_contexto = df_res.groupby("unique_id").head(6)
+
+            if len(df_final_contexto["unique_id"].unique()) > 8:
+                top_economicos = df_final_contexto.groupby("unique_id")["y"].mean().nsmallest(8).index
+                df_final_contexto = df_final_contexto[df_final_contexto["unique_id"].isin(top_economicos)]
+            
+            contexto_precios = df_final_contexto.to_string(index=False)
         else:
-            # Si no es bebida, quitamos las bebidas del resultado para no mezclar
-            df_res = df_res[~df_res["unique_id"].str.contains("COLA|JUGO", case=False, na=False)]
+            contexto_precios = "No hay datos para: " + ", ".join(keywords)
 
-        # D. Búsqueda por similitud (Recuperado)
-        nombres_csv = df_res["unique_id"].unique().tolist()
-        matches = []
-        for k in keywords:
-            # Encuentra palabras similares aunque estén mal escritas
-            matches.extend(difflib.get_close_matches(k, nombres_csv, n=2, cutoff=0.5))
-        
-        df_final_contexto = df_res[df_res["unique_id"].isin(list(set(matches)))]
-        contexto_precios = df_final_contexto.sort_values(by="ds", ascending=False).head(10).to_string(index=False)
-
-        # 4. GENERACIÓN DE RESPUESTA ESTRATÉGICA
+        # --- D. RESPUESTA FINAL CON ESTRATEGIA ---
         final_system = SYSTEM_ESTRATEGA.format(
-            nombre=nombre, objetivo=objetivo, calorias=int(cal_meta), 
-            macros=macros, dieta_info=dieta_info
+            nombre=nombre, objetivo=objetivo, calorias=int(cal_meta), macros=macros, dieta_info=dieta_info
         )
-        
-        # Inyectamos reglas de la versión nueva para mayor control
-        final_system += f"\nREGLA: Estás en modo {('BEBIDAS' if es_bebida else 'ALIMENTOS')}. Sé breve y cita precios reales del contexto."
+        final_system += """
+        \nREGLAS DE ORO:
+        1. Si el usuario rechaza un alimento (ej: pollo), ignora los datos de pollo y busca opciones en los datos de 'CARNE' o 'RES' proporcionados.
+        2. Analiza las 'Predicciones' 2026: Si el precio sube, recomienda stock (3-4 meses). Si baja, recomienda compra mínima.
+        3. Siempre menciona el nombre exacto del corte de carne encontrado en los datos.
+        """
 
         full_response = client.chat.completions.create(
             model="gpt-4o",
             messages=[
                 {"role": "system", "content": final_system},
-                {"role": "system", "content": f"DATOS CSV (PRECIOS/PREDICCIONES):\n{contexto_precios}"},
+                {"role": "system", "content": f"CONTEXTO DE PRECIOS ACTUALIZADO:\n{contexto_precios}"},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.4
@@ -132,4 +161,3 @@ if prompt := st.chat_input("Escribe aquí…"):
         answer = full_response.choices[0].message.content
         st.write(answer)
         st.session_state.messages.append({"role": "assistant", "content": answer})
-        st.session_state.ultimo_plan = dieta_info
