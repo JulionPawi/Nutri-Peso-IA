@@ -47,6 +47,11 @@ Presenta la información de esta manera:
 
 6. RESTRICCIÓN DE RESPUESTA:
 No inventes precios. Si un ingrediente de la dieta no tiene ninguna referencia en el CSV, menciona: "No tengo el precio de [Ingrediente] en mi base de datos actual, pero el resto de tu lista suma..."
+INSTRUCCIONES CRÍTICAS DE PRECIOS:
+1. Analiza la columna 'ds' (fecha) y la columna 'Tipo_Dato' (Histórico o Predicción).
+2. Si detectas registros de 'Predicción' para fechas futuras (ej. 2026), DEBES informar al usuario si el precio tiende a subir o bajar.
+3. Ejemplo: "El bistec cuesta $224 hoy, pero mi análisis predice que subirá a $231 en abril; te sugiero comprar ahora o buscar cerdo que bajará de precio".
+4. Si el usuario te pide algo que no está exacto, usa los datos del producto más parecido que recibas en el contexto.
 """
 
 
