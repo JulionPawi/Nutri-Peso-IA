@@ -6,7 +6,15 @@ from src.prompts import SYSTEM_PROMPT, generar_prompt_consulta, BIENVENIDA_APP
 
 # 1. Configuración inicial
 load_dotenv()
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+# os.getenv buscará "OPENAI_API_KEY" en el sistema 
+# (donde GitHub Actions la inyectará automáticamente)
+api_key = os.getenv("OPENAI_API_KEY")
+
+if not api_key:
+    raise ValueError("No se encontró la OPENAI_API_KEY. Verifica tu archivo .env o los Secrets de GitHub.")
+
+client = OpenAI(api_key=api_key)
 
 # 2. Cargar bases de datos (viven en la raíz según tu repo)
 df_precios = pd.read_csv('CANASTA_BASICA_CON_ETIQUETAS.csv')
