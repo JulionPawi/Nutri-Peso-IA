@@ -16,7 +16,7 @@ DIETAS_BASE = {
     "perder_peso": {
         "nombre": "Plan Déficit Calórico",
         "tips": "Prioriza verduras de hoja verde.",
-        "sugerencia": "Pechuga de pollo a la plancha con calabacitas.",
-        "items": ["PECHUGA", "CALABACITA", "ESPINACA"]
+        "sugerencia": "Pechuga de pollo con calabacitas.",
+        "items": ["POLLO", "CALABACITA", "HUEVO", "ESPINACA"] # <--- Estos deben ser términos del CSV
     }
 }
