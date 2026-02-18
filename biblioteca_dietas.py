@@ -3,22 +3,20 @@
 DIETAS_BASE = {
     "vegana": {
         "nombre": "Plan Plant-Based",
-        "tips": "Combina cereales con leguminosas para obtener proteína completa.",
-        "items": ["FRIJOL", "LENTEJA", "ARROZ", "NOPAL", "AVENA"]
+        "tips": "Combina cereales con leguminosas.",
+        "sugerencia": "Ensalada de lentejas con nopales y arroz.", # <--- Debe decir 'sugerencia'
+        "items": ["LENTEJA", "NOPAL", "ARROZ"]
     },
     "ganar_musculo": {
         "nombre": "Plan Hipertrofia",
-        "tips": "Aumenta tu ingesta de proteína y carbohidratos complejos.",
-        "items": ["BISTEC", "POLLO", "HUEVO", "ATUN", "ARROZ"]
+        "tips": "Aumenta la proteína y carbohidratos.",
+        "sugerencia": "Bistec de res con papas y frijoles.",
+        "items": ["BISTEC", "PAPA", "FRIJOL"]
     },
     "perder_peso": {
         "nombre": "Plan Déficit Calórico",
-        "tips": "Prioriza verduras de hoja verde y proteínas magras.",
-        "items": ["ESPINACA", "PECHUGA", "PESCADO", "CALABACITA"]
-    },
-    "sin_gluten": {
-        "nombre": "Plan Celiaco-Friendly",
-        "tips": "Evita el trigo. Usa maíz y tubérculos como fuente de energía.",
-        "items": ["MAIZ", "PAPA", "ARROZ", "FRUTA"]
+        "tips": "Prioriza verduras de hoja verde.",
+        "sugerencia": "Pechuga de pollo a la plancha con calabacitas.",
+        "items": ["PECHUGA", "CALABACITA", "ESPINACA"]
     }
 }
