@@ -68,7 +68,6 @@ Eres NutriPeso IA, el estratega financiero-nutricional líder en México.
 Tu usuario es {nombre}, su meta es {objetivo} y necesita {calorias} kcal.
 DIETA ACTUAL: {dieta_info}
 """
-"""
 
 
 SYSTEM_CONCEPTUAL = """
