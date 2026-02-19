@@ -188,12 +188,12 @@ if prompt := st.chat_input("Escribe aquí…", key="chat_nutripeso"):
             
             # --- B. INICIALIZACIÓN DE VARIABLES ---
             dieta_info = "No se generó un plan específico en este turno."
-            ingredientes_receta = []
+            texto_para_buscar = "" # Usaremos esto para buscar los precios de la dieta
             
             # --- C. LÓGICA DE DIETAS / RECETAS ---
-            texto_para_buscar = "" # Variable auxiliar
             if any(word in intent for word in ["DIETA", "COMER", "RECETA", "CENA", "CONCEPTUAL", "PRECIO"]):
                 try:
+                    # Usar tu API externa
                     api_nutri = NutriAPI()
                     rango_cal = f"{int(cal_meta/4)}-{int(cal_meta/3)}"
                     recetas_encontradas = api_nutri.buscar_recetas(prompt, rango_cal)
@@ -207,20 +207,17 @@ if prompt := st.chat_input("Escribe aquí…", key="chat_nutripeso"):
                         )
                         texto_para_buscar = " ".join(receta['ingredientes'])
                     else:
+                        # Fallback a dietas locales
                         tipo = "vegana" if "VEGAN" in prompt.upper() else objetivo
                         plan_local = DIETAS_BASE.get(tipo, DIETAS_BASE.get("perder_peso"))
                         dieta_info = f"🏠 **PLAN LOCAL:** {plan_local.get('nombre')}\n💡 {plan_local.get('sugerencia')}"
-                        texto_para_buscar = plan_local.get('sugerencia', '') # <--- EXTRAEMOS ESTO
+                        texto_para_buscar = plan_local.get('sugerencia', '')
                 except Exception as e:
                     dieta_info = "Utiliza tu conocimiento nutricional general para proponer una dieta balanceada."
 
             # --- D. MOTOR DE BÚSQUEDA DE PRECIOS OPTIMIZADO ---
-            # Ahora le pasamos el prompt Y lo que sea que diga la dieta sugerida
+            # Pasamos tanto lo que dijo el usuario, como el texto de la dieta
             contexto_precios = buscar_precios_reales(df_p, prompt, texto_para_buscar)
-
-            # --- D. MOTOR DE BÚSQUEDA DE PRECIOS OPTIMIZADO ---
-            # Pasamos tanto lo que dijo el usuario, como los ingredientes de la receta (si se encontró una)
-            contexto_precios = buscar_precios_reales(df_p, prompt, ingredientes_receta)
 
             # --- E. RESPUESTA FINAL CON GPT-4o ---
             # Construimos el sistema
