@@ -8,7 +8,7 @@ Este proyecto representa el trabajo final de diplomado, enfocado en la aplicaci�
 
 ## 🚀 Resumen del Proyecto (Abstract)
 
-Desarrollado por la compañía ficticia **NutriTech Solutions**, el proyecto aborda la falta de herramientas accesibles para anticipar fluctuaciones de precios y monitorear indicadores de salud básicos. La solución integra dos módulos principales:
+Desarrollado por la compañía ficticia ** Nutri-Peso-IA**, el proyecto aborda la falta de herramientas accesibles para anticipar fluctuaciones de precios y monitorear indicadores de salud básicos. La solución integra dos módulos principales:
 
 1.  **Predicción de Precios:** Pronóstico de la canasta básica mediante el modelo **XGBoost**.
 2.  **Interfaz de Salud:** Clasificación automatizada del estado nutricional (IMC) utilizando **Random Forest Classifier**.
