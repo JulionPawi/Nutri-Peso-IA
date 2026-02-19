@@ -65,18 +65,17 @@ with st.sidebar:
 st.title("🥗 NutriPeso IA: Tu Estratega de Ahorro y Salud")
 
 if "messages" not in st.session_state:
-    saludo = (
-        f"¡Hola {nombre}! 👋 Soy NutriPeso IA. "
-        f"Basado en tu perfil, tu meta ideal es de {int(cal_meta)} kcal/día. Mi misión es que comas bien sin que tu cartera sufra.
+    saludo = f"""¡Hola {nombre}! 👋 Soy **NutriPeso IA**.
 
-        📉 ¿Por dónde empezamos hoy?
-        
-        Puedo diseñarte una receta optimizada con los precios de hoy en CDMX.
-        
-        O puedo darte el pronóstico de precios 2026 para que te anticipes a las alzas en el súper.
-        
-        ¿Qué prefieres?🛒"
-    )
+Basado en tu perfil, tu meta ideal es de **{int(cal_meta)} kcal/día**. Mi misión es que comas bien sin que tu cartera sufra. 🥗💰
+
+📉 **¿Por dónde empezamos hoy?**
+
+1. Puedo diseñarte una **receta optimizada** con los precios de hoy en CDMX.
+2. O puedo darte el **pronóstico de precios 2026** para que te anticipes a las alzas en el súper.
+
+¿Qué prefieres? 🛒"""
+
     st.session_state.messages = [{"role": "assistant", "content": saludo}]
 
 for msg in st.session_state.messages:
