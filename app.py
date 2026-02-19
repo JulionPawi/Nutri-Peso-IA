@@ -191,9 +191,9 @@ if prompt := st.chat_input("Escribe aquí…", key="chat_nutripeso"):
             ingredientes_receta = []
             
             # --- C. LÓGICA DE DIETAS / RECETAS ---
+            texto_para_buscar = "" # Variable auxiliar
             if any(word in intent for word in ["DIETA", "COMER", "RECETA", "CENA", "CONCEPTUAL", "PRECIO"]):
                 try:
-                    # Usar tu API externa
                     api_nutri = NutriAPI()
                     rango_cal = f"{int(cal_meta/4)}-{int(cal_meta/3)}"
                     recetas_encontradas = api_nutri.buscar_recetas(prompt, rango_cal)
@@ -205,14 +205,18 @@ if prompt := st.chat_input("Escribe aquí…", key="chat_nutripeso"):
                             f"🔥 **Calorías:** {receta['calorias']} kcal\n"
                             f"🛒 **Ingredientes Principales:** {', '.join(receta['ingredientes'][:5])}"
                         )
-                        ingredientes_receta = receta['ingredientes']
+                        texto_para_buscar = " ".join(receta['ingredientes'])
                     else:
-                        # Fallback a dietas locales
                         tipo = "vegana" if "VEGAN" in prompt.upper() else objetivo
                         plan_local = DIETAS_BASE.get(tipo, DIETAS_BASE.get("perder_peso"))
                         dieta_info = f"🏠 **PLAN LOCAL:** {plan_local.get('nombre')}\n💡 {plan_local.get('sugerencia')}"
+                        texto_para_buscar = plan_local.get('sugerencia', '') # <--- EXTRAEMOS ESTO
                 except Exception as e:
                     dieta_info = "Utiliza tu conocimiento nutricional general para proponer una dieta balanceada."
+
+            # --- D. MOTOR DE BÚSQUEDA DE PRECIOS OPTIMIZADO ---
+            # Ahora le pasamos el prompt Y lo que sea que diga la dieta sugerida
+            contexto_precios = buscar_precios_reales(df_p, prompt, texto_para_buscar)
 
             # --- D. MOTOR DE BÚSQUEDA DE PRECIOS OPTIMIZADO ---
             # Pasamos tanto lo que dijo el usuario, como los ingredientes de la receta (si se encontró una)
