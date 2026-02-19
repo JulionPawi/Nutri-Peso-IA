@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 import difflib
 
 # --- IMPORTACIONES DE ARCHIVOS LOCALES ---
-from calculators import calcular_mifflin_st_jeor, distribuir_macros, buscador_nutripeso, limpiar_nombre_producto
+from calculators import calcular_mifflin_st_jeor, distribuir_macros, buscador_nutripeso, limpiar_nombre_producto, buscador_inteligente_ia
 from prompts import SYSTEM_CLASSIFIER, SYSTEM_ESTRATEGA, SYSTEM_CONCEPTUAL
 from biblioteca_dietas import DIETAS_BASE
 from api_dieta import NutriAPI
