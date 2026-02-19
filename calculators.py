@@ -165,3 +165,74 @@ def cargar_precios_optimizados():
 
 # --- PRUEBA RÁPIDA (Opcional, para que veas qué le manda a la IA) ---
 # print(cargar_precios_optimizados())
+
+def buscar_precios_reales(df, prompt_usuario, texto_dieta=""):
+    """Busca precios en la base de datos basándose en el prompt o los ingredientes."""
+    if df.empty:
+        return "Base de datos de precios no disponible."
+        
+    fecha_reciente = df['ds'].max()
+    df_actual = df[df['ds'] == fecha_reciente]
+    
+    # Unimos lo que pidió el usuario + la dieta sugerida para buscar todo de una vez
+    texto_busqueda = f"{prompt_usuario} {texto_dieta}".lower()
+
+    # Diccionario 100% adaptado a tu archivo CSV
+    busquedas = {
+        "Pollo": ["pollo", "pechuga"],
+        "Carne de Res": ["res", "bistec", "molida", "retazo", "arrachera", "chamabrete", "diezmillo"],
+        "Pescado": ["tilapia", "mojarra", "pescado", "atún", "atun", "salmón", "salmon", "basa"],
+        "Cerdo": ["cerdo", "chuleta", "lomo", "tocino", "pierna"],
+        "Arroz": ["arroz"],
+        "Avena": ["avena"],
+        "Frijoles": ["frijol", "frijoles", "lentejas"],
+        "Huevos": ["huevo", "huevos"],
+        "Leche": ["leche"],
+        "Yogur": ["yogurt", "batido", "griego", "activia"],
+        "Queso": ["queso", "panela", "oaxaca", "manchego", "cottage"],
+        "Jugo": ["jugo ", "jugo de", "nectar", "néctar", "boing", "jumex"], 
+        "Verduras (Verdes)": ["espinaca", "brócoli", "brocoli", "calabacita", "lechuga"], 
+        "Tomate y Cebolla": ["tomate", "jitomate", "cebolla"],
+        "Zanahoria": ["zanahoria"],
+        "Fruta": ["manzana", "platano", "plátano", "durazno"],
+        "Aguacate": ["aguacate"],
+        "Aceite": ["aceite"]
+    }
+
+    texto_precios = "DATOS EXTRAÍDOS DE LA CANASTA BÁSICA (PRECIOS REALES MXN):\n"
+    encontrados = 0
+
+    # Buscar en la base de datos
+    for categoria, keywords in busquedas.items():
+        if any(kw in texto_busqueda for kw in keywords):
+            
+            # Buscar coincidencias exactas con el diccionario
+            patron = '|'.join(keywords)
+            mask = df_actual['unique_id'].str.contains(patron, case=False, na=False)
+            
+            # --- FILTROS DE LIMPIEZA BASADOS EN TU CSV ---
+            if categoria == "Pollo":
+                mask &= ~df_actual['unique_id'].str.contains("Cordon|Suiza|Papilla", case=False, na=False)
+            elif categoria == "Jugo":
+                # Evitar que te recomiende Mayonesa o Jugo Maggi
+                mask &= ~df_actual['unique_id'].str.contains("Mayonesa|Maggi|Clamato", case=False, na=False)
+            elif categoria == "Yogur":
+                # Evitar confusiones con leches saborizadas o yakult
+                mask &= ~df_actual['unique_id'].str.contains("Yakult", case=False, na=False)
+                
+            resultados = df_actual[mask]
+            
+            if not resultados.empty:
+                precio_promedio = resultados['y'].mean()
+                
+                # TOMAR HASTA 3 EJEMPLOS REALES PARA DAR VARIEDAD
+                ejemplos_reales = resultados['unique_id'].drop_duplicates().head(3).tolist()
+                ejemplos_texto = " | ".join(ejemplos_reales) 
+                
+                texto_precios += f"- {categoria}: Aprox ${precio_promedio:.2f} MXN (Opciones: {ejemplos_texto})\n"
+                encontrados += 1
+
+    if encontrados == 0:
+        return "No se encontraron precios exactos para los ingredientes de la receta. Considera los precios estándar de tu localidad."
+        
+    return texto_precios
