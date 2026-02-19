@@ -135,45 +135,82 @@ if prompt := st.chat_input("Escribe aquí…"):
             )
             plan_actual = plan_local
 
-        # --- D. MOTOR DE BÚSQUEDA INTEGRADO ---
+# -------------------------------------------------------------
+# 4. LÓGICA PRINCIPAL DEL CHAT
+# -------------------------------------------------------------
+if prompt := st.chat_input("Escribe aquí…"):
+    st.session_state.messages.append({"role": "user", "content": prompt})
+    st.chat_message("user").write(prompt)
+
+    with st.chat_message("assistant"):
+        # 1. CLASIFICACIÓN (Detección de intención)
+        intent = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "system", "content": SYSTEM_CLASSIFIER}, {"role": "user", "content": prompt}]
+        ).choices[0].message.content.upper()
+
+        # --- INICIALIZACIÓN DE VARIABLES CRÍTICAS ---
+        dieta_info = "Sin plan específico."
+        plan_actual = {}
+        contexto_precios = "No se solicitó búsqueda de precios específicos."
         
-        if keywords:
-            # 1. Llamamos a la función de búsqueda (la que definimos anteriormente)
-            # Suponiendo que df_p es tu DataFrame cargado con el CSV de la canasta
+        # 2. EXTRACCIÓN DE KEYWORDS (Indispensable para el buscador)
+        # Limpiamos el prompt para buscar productos en el CSV
+        stop_words = {"QUIERO", "GUSTA", "BUSCA", "DIETA", "PRECIO", "CUANTO", "ESTA", "PARA", "CON", "LAS", "LOS"}
+        keywords = [w.upper().strip(",.") for w in prompt.split() if w.upper() not in stop_words and len(w) > 3]
+
+        # 3. LÓGICA DE DIETAS (Solo si el intent lo pide)
+        if any(word in intent for word in ["DIETA", "COMER", "RECETA", "CENA", "CONCEPTUAL"]):
+            api_nutri = NutriAPI()
+            rango_cal = f"{int(cal_meta/4)}-{int(cal_meta/3)}"
+            recetas_encontradas = api_nutri.buscar_recetas(prompt, rango_cal)
+
+            if recetas_encontradas:
+                receta = recetas_encontradas[0]
+                dieta_info = (
+                    f"🍳 **RECETA:** {receta['nombre']}\n"
+                    f"🔥 **Calorías:** {receta['calorias']} kcal\n"
+                    f"🛒 **Ingredientes:** {', '.join(receta['ingredientes'][:5])}"
+                )
+                plan_actual = {"nombre": receta['nombre'], "items": receta['ingredientes']}
+                # Si hay receta, agregamos sus ingredientes a las keywords de búsqueda de precio
+                keywords.extend([str(i).split()[-1].upper() for i in receta['ingredientes'][:3]])
+            else:
+                tipo = "vegana" if "VEGAN" in prompt.upper() else objetivo
+                plan_local = DIETAS_BASE.get(tipo, DIETAS_BASE.get("perder_peso"))
+                dieta_info = f"🏠 **PLAN LOCAL:** {plan_local.get('nombre')}\n💡 {plan_local.get('sugerencia')}"
+                plan_actual = plan_local
+
+        # 4. MOTOR DE BÚSQUEDA (CSV) - Ahora funciona para DIETAS y PRECIOS
+        if keywords or "PRECIOS" in intent:
             df_resultados = buscador_nutripeso(prompt, df_p)
-        
+            
             if not df_resultados.empty:
-                # 2. Aplicamos la limpieza estética para el bot
                 df_resultados['nombre_amigable'] = df_resultados['unique_id'].apply(limpiar_nombre_producto)
-                
-                # 3. Formateamos el contexto que leerá la IA
-                # Incluimos el nombre limpio, la fecha (ds) y el precio (y)
                 contexto_precios = "PRODUCTOS ENCONTRADOS EN CDMX:\n"
                 for _, row in df_resultados.iterrows():
-                    contexto_precios += f"- {row['nombre_amigable']}: ${row['y']} MXN (Corte: {row['ds']})\n"
-                
-                # Guardamos los IDs reales por si necesitas hacer cálculos de predicción 2026 después
-                productos_ids = df_resultados['unique_id'].tolist()
+                    contexto_precios += f"- {row['nombre_amigable']}: ${row['y']} MXN (Corte: {row['ds'].strftime('%Y-%m-%d')})\n"
             else:
-                contexto_precios = "No se encontraron productos exactos para estas categorías en la canasta básica."
-                productos_ids = []
+                contexto_precios = "No encontré esos productos exactos en la base de datos de CDMX."
 
-        # --- D. RESPUESTA FINAL CON ESTRATEGIA ---
+        # 5. RESPUESTA FINAL CON ESTRATEGIA
+        # Nota: Asegúrate que SYSTEM_ESTRATEGA tenga los placeholders: {nombre}, {objetivo}, {calorias}, {macros}, {dieta_info}
         final_system = SYSTEM_ESTRATEGA.format(
-            nombre=nombre, objetivo=objetivo, calorias=int(cal_meta), macros=macros, dieta_info=dieta_info
+            nombre=nombre, 
+            objetivo=objetivo, 
+            calorias=int(cal_meta), 
+            macros=macros, 
+            dieta_info=dieta_info
         )
-        final_system += """
-        \nREGLAS DE ORO:
-        1. Si el usuario rechaza un alimento (ej: pollo), ignora los datos de pollo y busca opciones en los datos de 'CARNE' o 'RES' proporcionados.
-        2. Analiza las 'Predicciones' 2026: Si el precio sube, recomienda stock (3-4 meses). Si baja, recomienda compra mínima.
-        3. Siempre menciona el nombre exacto del corte de carne encontrado en los datos.
-        """
+        
+        # Inyectamos contexto extra
+        final_system += f"\n\nCONTEXTO DE PRECIOS REALES:\n{contexto_precios}"
+        final_system += "\n\nREGLA: Usa los precios anteriores para dar consejos de ahorro y menciona tendencias 2026."
 
         full_response = client.chat.completions.create(
             model="gpt-4o",
             messages=[
                 {"role": "system", "content": final_system},
-                {"role": "system", "content": f"CONTEXTO DE PRECIOS ACTUALIZADO:\n{contexto_precios}"},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.4
