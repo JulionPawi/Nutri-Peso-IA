@@ -76,3 +76,41 @@ def buscador_nutripeso(query, dataframe):
         resultados = resultados.sort_values(by='score', ascending=False)
 
     return resultados.head(8) # Retornamos los 8 mejores
+def buscador_inteligente_ia(query, dataframe, client):
+    # 1. Extraemos los 30 candidatos más probables por texto (Rápido y barato)
+    stop_words = {"DE", "CON", "UN", "EL", "PARA", "QUIERO", "BUSCO"}
+    tokens = [t.upper() for t in query.split() if t.upper() not in stop_words]
+    
+    # Buscamos filas que contengan alguna de las palabras clave
+    patron = "|".join(tokens)
+    candidatos = dataframe[dataframe['unique_id'].str.contains(patron, case=False, na=False)].copy()
+    
+    if candidatos.empty:
+        return pd.DataFrame()
+
+    # Si hay demasiados, nos quedamos con los 30 mejores según coincidencia de texto
+    candidatos = candidatos.head(30) 
+
+    # 2. Le preguntamos a la IA cuál es el mejor (El "Cerebro")
+    lista_para_ia = candidatos['unique_id'].tolist()
+    
+    prompt_filtro = f"""
+    Usuario busca: "{query}"
+    Lista de productos: {lista_para_ia}
+    
+    Instrucción: Selecciona los 5 productos de la lista que mejor coincidan con la intención del usuario. 
+    Prioriza cortes de carne si pide carne, o marcas específicas si las menciona.
+    Responde ÚNICAMENTE con los nombres exactos separados por comas.
+    """
+    
+    respuesta = client.chat.completions.create(
+        model="gpt-4o-mini", # Usamos el modelo barato para filtrar
+        messages=[{"role": "system", "content": "Eres un experto en compras de supermercado en México."},
+                  {"role": "user", "content": prompt_filtro}],
+        temperature=0
+    )
+    
+    seleccionados = [s.strip() for s in respuesta.choices[0].message.content.split(",")]
+    
+    # 3. Retornamos solo los que la IA eligió
+    return dataframe[dataframe['unique_id'].isin(seleccionados)]
