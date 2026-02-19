@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 import difflib
 
 # --- IMPORTACIONES DE ARCHIVOS LOCALES ---
-from calculators import calcular_mifflin_st_jeor, distribuir_macros
+from calculators import calcular_mifflin_st_jeor, distribuir_macros, buscador_nutripeso, limpiar_nombre_producto
 from prompts import SYSTEM_CLASSIFIER, SYSTEM_ESTRATEGA, SYSTEM_CONCEPTUAL
 from biblioteca_dietas import DIETAS_BASE
 from api_dieta import NutriAPI
@@ -67,7 +67,15 @@ st.title("🥗 NutriPeso IA: Tu Estratega de Ahorro y Salud")
 if "messages" not in st.session_state:
     saludo = (
         f"¡Hola {nombre}! 👋 Soy NutriPeso IA. "
-        f"Necesitas **{int(cal_meta)} kcal/día**. ¿Buscamos una receta o quieres saber qué productos de tu dieta subirán de precio en 2026? 🛒"
+        f"Basado en tu perfil, tu meta ideal es de {int(cal_meta)} kcal/día. Mi misión es que comas bien sin que tu cartera sufra.
+
+        📉 ¿Por dónde empezamos hoy?
+        
+        Puedo diseñarte una receta optimizada con los precios de hoy en CDMX.
+        
+        O puedo darte el pronóstico de precios 2026 para que te anticipes a las alzas en el súper.
+        
+        ¿Qué prefieres?🛒"
     )
     st.session_state.messages = [{"role": "assistant", "content": saludo}]
 
@@ -89,53 +97,67 @@ if prompt := st.chat_input("Escribe aquí…"):
             messages=[{"role": "system", "content": SYSTEM_CLASSIFIER}, {"role": "user", "content": prompt}]
         ).choices[0].message.content.upper()
 
-        # --- B. LÓGICA DE DIETAS ---
-        dieta_info, plan_actual = "Sin plan específico.", {}
-
-        if any(word in intent for word in ["DIETA", "COMER", "RECETA", "CENA", "GASTAR"]):
-            api_nutri = NutriAPI()
-            rango_cal = f"{int(cal_meta/4)}-{int(cal_meta/3)}"
-            res_api = api_nutri.buscar_recetas(prompt, rango_cal)
-
-            if res_api and "hits" in res_api and len(res_api["hits"]) > 0:
-                receta = res_api["hits"][0]["recipe"]
-                dieta_info = f"RECETA: {receta.get('label')}\nIngredientes: {', '.join(receta.get('ingredientLines', [])[:5])}"
-                plan_actual["items"] = receta.get("label", "").upper().split()
-            else:
-                tipo = "vegana" if "VEGAN" in prompt.upper() else objetivo
-                plan_actual = DIETAS_BASE.get(tipo, DIETAS_BASE["perder_peso"])
-                dieta_info = f"PLAN LOCAL: {plan_actual.get('nombre')}\nSugerencia: {plan_actual.get('sugerencia')}"
-
-        # --- C. MOTOR DE BÚSQUEDA ROBUSTO (CSV) ---
-        raw_words = []
-        if plan_actual.get("items"): raw_words.extend(plan_actual["items"])
-        raw_words.extend(prompt.split())
-
-        stop_words = ["QUIERO", "GUSTA", "GUSTARIA", "AGRADARIA", "PONLE", "QUITA", "BUSCA", "DIETA", "RECETA", "PARA", "ESTA", "OTRO", "TIPO"]
-        keywords = [w.upper().replace(",", "").replace(".", "") for w in raw_words if len(w) > 3 and w.upper() not in stop_words]
-
-        df_res = pd.DataFrame()
-        if keywords:
-            search_pattern = "|".join(keywords)
-            df_res = df_p[df_p["unique_id"].str.contains(search_pattern, case=False, na=False)]
-
-            if len(df_res["unique_id"].unique()) < 3:
-                nombres_csv = df_p["unique_id"].unique().tolist()
-                for k in keywords:
-                    matches = difflib.get_close_matches(k, nombres_csv, n=3, cutoff=0.4)
-                    df_res = pd.concat([df_res, df_p[df_p["unique_id"].isin(matches)]]).drop_duplicates()
-
-        if not df_res.empty:
-            df_res = df_res.sort_values(by=["unique_id", "ds"], ascending=[True, False])
-            df_final_contexto = df_res.groupby("unique_id").head(6)
-
-            if len(df_final_contexto["unique_id"].unique()) > 8:
-                top_economicos = df_final_contexto.groupby("unique_id")["y"].mean().nsmallest(8).index
-                df_final_contexto = df_final_contexto[df_final_contexto["unique_id"].isin(top_economicos)]
+    # --- B. LÓGICA DE DIETAS (Optimizado para NutriPeso IA) ---
+    
+    dieta_info = "Sin plan específico."
+    plan_actual = {}
+    
+    # Detectamos si el usuario quiere comer o cuidar el gasto
+    if any(word in intent for word in ["DIETA", "COMER", "RECETA", "CENA", "GASTAR"]):
+        api_nutri = NutriAPI()
+        
+        # Definimos un rango calórico inteligente por comida (aprox 1/3 del total)
+        rango_cal = f"{int(cal_meta/4)}-{int(cal_meta/3)}"
+        
+        # La API mejorada ya devuelve una lista limpia o None
+        recetas_encontradas = api_nutri.buscar_recetas(prompt, rango_cal)
+    
+        if recetas_encontradas:
+            # Tomamos la primera opción (la más relevante)
+            receta = recetas_encontradas[0]
             
-            contexto_precios = df_final_contexto.to_string(index=False)
+            # Formateamos la info para el bot
+            dieta_info = (
+                f"🍳 **RECETA ENCONTRADA:** {receta['nombre']}\n"
+                f"🔥 **Calorías:** {receta['calorias']} kcal\n"
+                f"🛒 **Ingredientes clave:** {', '.join(receta['ingredientes'][:5])}"
+            )
+            # Guardamos los items para futuras comparaciones de precios
+            plan_actual = {"nombre": receta['nombre'], "items": receta['ingredientes']}
+            
         else:
-            contexto_precios = "No hay datos para: " + ", ".join(keywords)
+            # --- FALLBACK: PLAN B (Local) si la API falla o no hay internet ---
+            tipo = "vegana" if "VEGAN" in prompt.upper() else objetivo
+            plan_local = DIETAS_BASE.get(tipo, DIETAS_BASE.get("perder_peso"))
+            
+            dieta_info = (
+                f"🏠 **PLAN LOCAL (Modo Ahorro):** {plan_local.get('nombre')}\n"
+                f"💡 **Sugerencia:** {plan_local.get('sugerencia')}"
+            )
+            plan_actual = plan_local
+
+        # --- D. MOTOR DE BÚSQUEDA INTEGRADO ---
+        
+        if keywords:
+            # 1. Llamamos a la función de búsqueda (la que definimos anteriormente)
+            # Suponiendo que df_p es tu DataFrame cargado con el CSV de la canasta
+            df_resultados = buscador_nutripeso(prompt, df_p)
+        
+            if not df_resultados.empty:
+                # 2. Aplicamos la limpieza estética para el bot
+                df_resultados['nombre_amigable'] = df_resultados['unique_id'].apply(limpiar_nombre_producto)
+                
+                # 3. Formateamos el contexto que leerá la IA
+                # Incluimos el nombre limpio, la fecha (ds) y el precio (y)
+                contexto_precios = "PRODUCTOS ENCONTRADOS EN CDMX:\n"
+                for _, row in df_resultados.iterrows():
+                    contexto_precios += f"- {row['nombre_amigable']}: ${row['y']} MXN (Corte: {row['ds']})\n"
+                
+                # Guardamos los IDs reales por si necesitas hacer cálculos de predicción 2026 después
+                productos_ids = df_resultados['unique_id'].tolist()
+            else:
+                contexto_precios = "No se encontraron productos exactos para estas categorías en la canasta básica."
+                productos_ids = []
 
         # --- D. RESPUESTA FINAL CON ESTRATEGIA ---
         final_system = SYSTEM_ESTRATEGA.format(
