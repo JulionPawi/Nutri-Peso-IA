@@ -132,7 +132,7 @@ if prompt := st.chat_input("Escribe aquí…", key="chat_nutripeso"):
 
         # --- D. MOTOR DE BÚSQUEDA DE PRECIOS ---
         if keywords or "PRECIOS" in intent:
-            df_resultados = buscador_nutripeso(prompt, df_p)
+            df_resultados = buscador_inteligente_ia(prompt, df_p, client)
             
             if not df_resultados.empty:
                 df_resultados['nombre_amigable'] = df_resultados['unique_id'].apply(limpiar_nombre_producto)
