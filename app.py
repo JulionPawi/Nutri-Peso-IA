@@ -5,13 +5,11 @@ import os
 from dotenv import load_dotenv
 
 # --- IMPORTACIONES DE ARCHIVOS LOCALES ---
-from calculators import calcular_mifflin_st_jeor, distribuir_macros, limpiar_nombre_producto
+# NOTA: Quitamos las funciones de búsqueda viejas porque ahora usamos selección directa
+from calculators import calcular_mifflin_st_jeor, distribuir_macros
 from prompts import SYSTEM_CLASSIFIER, SYSTEM_ESTRATEGA
 from biblioteca_dietas import DIETAS_BASE
 from api_dieta import NutriAPI
-
-# NOTA: Quité 'buscador_inteligente_ia' porque ahora usamos la función optimizada local
-# para no gastar tokens ni tiempo en búsquedas complejas ineficientes.
 
 # -------------------------------------------------------------
 # 1. CONFIGURACIÓN GENERAL
@@ -22,101 +20,54 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 @st.cache_data
 def load_data():
-    # Cargar la base de datos limpia (Asegúrate de que este CSV sea el que ya procesamos con nombres limpios)
+    """Carga las bases de datos y extrae la lista de productos únicos."""
     try:
+        # 1. Cargar la base limpia
         df_p = pd.read_csv('CANASTA_BASICA_CON_ETIQUETAS.csv')
         df_p['ds'] = pd.to_datetime(df_p['ds'])
         
-        # ProductosMexicanos (Si lo usas para algo más, se carga, si no, lo ignoramos)
+        # 2. Cargar la otra base (si existe)
         try:
             df_n = pd.read_csv('ProductosMexicanos.csv')
         except:
             df_n = pd.DataFrame()
             
-        return df_p, df_n
+        # 3. Obtener lista de productos únicos limpios y ordenados para el Dropdown
+        # Usamos la columna 'unique_id' que es la que tiene los nombres limpios
+        lista_productos = sorted(df_p['unique_id'].dropna().unique().tolist())
+            
+        return df_p, df_n, lista_productos
     except Exception as e:
         st.error(f"Error cargando bases de datos: {e}")
-        return pd.DataFrame(), pd.DataFrame()
+        return pd.DataFrame(), pd.DataFrame(), []
 
-df_p, df_n = load_data()
+df_p, df_n, lista_productos_db = load_data()
 
-# --- NUEVO MOTOR DE BÚSQUEDA DE PRECIOS OPTIMIZADO ---
-def buscar_precios_reales(df, prompt_usuario, ingredientes_receta=None):
-    """Busca precios en la base de datos basándose en el prompt o los ingredientes."""
-    if df.empty:
-        return "Base de datos de precios no disponible."
+# --- FUNCIÓN DE PRECIOS EXACTOS ---
+def obtener_precios_seleccionados(df, productos_seleccionados):
+    """Filtra la base de datos para obtener el precio actual solo de lo que eligió el usuario."""
+    if not productos_seleccionados:
+        return "El usuario no seleccionó productos de la base de datos."
         
-    # Usar la fecha más reciente para dar precios actuales (del mes)
+    # Usar la fecha más reciente para dar el precio actual
     fecha_reciente = df['ds'].max()
     df_actual = df[df['ds'] == fecha_reciente]
     
-    # 1. Definir qué vamos a buscar
-    texto_busqueda = prompt_usuario.lower()
-    if ingredientes_receta:
-        # Añadir los ingredientes que encontró la API de recetas a la búsqueda
-        texto_busqueda += " " + " ".join(ingredientes_receta).lower()
-
-    # 2. Diccionario de mapeo inteligente a tu CSV
-    busquedas = {
-        "Pollo": ["pollo", "pechuga"],
-        "Carne de Res": ["res", "bistec", "filete de res", "molida", "retazo"],
-        "Pescado": ["tilapia", "mojarra", "pescado", "atún", "atun", "salmón", "salmon"],
-        "Cerdo": ["cerdo", "chuleta", "lomo", "carnitas"],
-        "Arroz": ["arroz"],
-        "Avena": ["avena"],
-        "Frijoles": ["frijol", "frijoles"],
-        "Lentejas": ["lenteja", "lentejas"],
-        "Huevos": ["huevo", "huevos"],
-        "Leche": ["leche"],
-        "Yogur": ["yogur", "yogurt", "griego"],
-        "Queso": ["queso", "panela", "oaxaca", "manchego"],
-        "Manzana": ["manzana"],
-        "Plátano": ["platano", "plátano"],
-        "Tomate/Jitomate": ["tomate", "jitomate"],
-        "Cebolla": ["cebolla"],
-        "Brócoli": ["brocoli", "brócoli"],
-        "Zanahoria": ["zanahoria"],
-        "Aguacate": ["aguacate"],
-        "Aceite": ["aceite"]
-    }
-
-    texto_precios = "DATOS EXTRAÍDOS DE LA CANASTA BÁSICA (PRECIOS REALES MXN):\n"
-    encontrados = 0
-
-    # 3. Buscar en la base de datos
-    for categoria, keywords in busquedas.items():
-        # Si la categoría fue mencionada por el usuario o está en la receta
-        if any(kw in texto_busqueda for kw in keywords):
-            
-            # Buscar en el DataFrame
-            patron = '|'.join(keywords)
-            mask = df_actual['unique_id'].str.contains(patron, case=False, na=False)
-            
-            # Filtro especial para pollo: Evitar traer precios de nuggets o pollo cordon blue procesado
-            if categoria == "Pollo":
-                mask &= ~df_actual['unique_id'].str.contains("Cordon|Nugget", case=False, na=False)
-                
-            resultados = df_actual[mask]
-            
-            if not resultados.empty:
-                precio_promedio = resultados['y'].mean()
-                # Tomar el nombre de un producto real (para que la IA no invente marcas)
-                ejemplo_real = resultados['unique_id'].iloc[0] 
-                
-                texto_precios += f"- {categoria}: Aprox ${precio_promedio:.2f} MXN (Te sugerimos: {ejemplo_real})\n"
-                encontrados += 1
-
-    if encontrados == 0:
-        return "No se encontraron precios exactos en la base de datos para los ingredientes mencionados. Sugiere alternativas económicas o estima costos de mercado general de México."
+    # Filtrar exactamente los productos que seleccionó en la interfaz
+    resultados = df_actual[df_actual['unique_id'].isin(productos_seleccionados)]
+    
+    texto_precios = "DATOS EXACTOS DE LA CANASTA SELECCIONADA POR EL USUARIO:\n"
+    for _, row in resultados.iterrows():
+        texto_precios += f"- {row['unique_id']}: ${row['y']:.2f} MXN (Unidad: {row['Unidad']})\n"
         
     return texto_precios
 
 # -------------------------------------------------------------
-# 2. SIDEBAR – Perfil nutricional
+# 2. SIDEBAR – Perfil Nutricional y Canasta
 # -------------------------------------------------------------
 with st.sidebar:
     st.header("🏃 Mi Perfil Físico")
-    nombre = st.text_input("¿Cómo te llamas?", "")
+    nombre = st.text_input("¿Cómo te llamas?", "Julio")
 
     col_p, col_a = st.columns(2)
     with col_p:
@@ -142,6 +93,17 @@ with st.sidebar:
     st.success(f"🔥 Meta diaria: {int(cal_meta)} kcal")
     st.write(f"Prot: {int(macros['proteina'])}g | Grasas: {int(macros['grasas'])}g | Carbs: {int(macros['carbs'])}g")
 
+    # --- NUEVA SECCIÓN: MULTISELECT DE PRODUCTOS ---
+    st.markdown("---")
+    st.header("🛒 Mi Canasta")
+    st.write("¿Qué ingredientes tienes en casa o quieres cotizar?")
+    
+    productos_elegidos = st.multiselect(
+        "Busca y selecciona:", 
+        options=lista_productos_db,
+        placeholder="Ej. Pechuga, Arroz, Huevo..."
+    )
+
 # -------------------------------------------------------------
 # 3. INTERFAZ DEL CHAT (Historial)
 # -------------------------------------------------------------
@@ -150,31 +112,25 @@ st.title("🥗 NutriPeso IA: Tu Estratega de Ahorro y Salud")
 if "messages" not in st.session_state:
     saludo = f"""¡Hola {nombre}! 👋 Soy **NutriPeso IA**.
 
-Basado en tu perfil, tu meta ideal es de **{int(cal_meta)} kcal/día**. Mi misión es que comas bien sin que tu cartera sufra. 🥗💰
+Tu meta ideal es de **{int(cal_meta)} kcal/día**. 
+Puedes pedirme una dieta general o **seleccionar productos en la barra lateral 👈** y pedirme que te arme una receta con el presupuesto exacto.
 
-📉 **¿Por dónde empezamos hoy?**
-
-1. Puedo diseñarte una **receta optimizada** con los precios de hoy en CDMX.
-2. O puedo darte el **pronóstico de precios 2026** para que te anticipes a las alzas en el súper.
-
-¿Qué prefieres? 🛒"""
+¿Qué cocinamos hoy? 🛒"""
     st.session_state.messages = [{"role": "assistant", "content": saludo}]
 
-# Mostrar mensajes previos
 for msg in st.session_state.messages:
     st.chat_message(msg["role"]).write(msg["content"])
 
 # -------------------------------------------------------------
 # 4. LÓGICA UNIFICADA DEL CHAT
 # -------------------------------------------------------------
-if prompt := st.chat_input("Escribe aquí…", key="chat_nutripeso"):
+if prompt := st.chat_input("Ej: Ármame una cena con lo que seleccioné...", key="chat_nutripeso"):
     
-    # Mostrar mensaje del usuario
     st.session_state.messages.append({"role": "user", "content": prompt})
     st.chat_message("user").write(prompt)
 
     with st.chat_message("assistant"):
-        with st.spinner("Analizando mercado y armando tu plan..."):
+        with st.spinner("Analizando tus ingredientes y presupuesto..."):
             
             # --- A. CLASIFICACIÓN ---
             try:
@@ -183,44 +139,29 @@ if prompt := st.chat_input("Escribe aquí…", key="chat_nutripeso"):
                     messages=[{"role": "system", "content": SYSTEM_CLASSIFIER}, {"role": "user", "content": prompt}]
                 )
                 intent = intent_res.choices[0].message.content.upper()
-            except Exception as e:
-                intent = "DIETA" # Fallback si falla
+            except Exception:
+                intent = "DIETA" 
+
+            # --- B. OBTENER PRECIOS EXACTOS DEL DROPDOWN ---
+            contexto_precios = obtener_precios_seleccionados(df_p, productos_elegidos)
             
-            # --- B. INICIALIZACIÓN DE VARIABLES ---
-            dieta_info = "No se generó un plan específico en este turno."
-            texto_para_buscar = "" # Usaremos esto para buscar los precios de la dieta
-            
-            # --- C. LÓGICA DE DIETAS / RECETAS ---
-            if any(word in intent for word in ["DIETA", "COMER", "RECETA", "CENA", "CONCEPTUAL", "PRECIO"]):
-                try:
-                    # Usar tu API externa
+            # --- C. LÓGICA DE RECETAS ---
+            dieta_info = "Genera un plan basado en los ingredientes seleccionados o en la petición del usuario."
+            if not productos_elegidos and any(w in intent for w in ["DIETA", "COMER", "RECETA", "CENA"]):
+                 try:
                     api_nutri = NutriAPI()
                     rango_cal = f"{int(cal_meta/4)}-{int(cal_meta/3)}"
-                    recetas_encontradas = api_nutri.buscar_recetas(prompt, rango_cal)
-
-                    if recetas_encontradas:
-                        receta = recetas_encontradas[0]
+                    recetas = api_nutri.buscar_recetas(prompt, rango_cal)
+                    if recetas:
                         dieta_info = (
-                            f"🍳 **RECETA SUGERIDA:** {receta['nombre']}\n"
-                            f"🔥 **Calorías:** {receta['calorias']} kcal\n"
-                            f"🛒 **Ingredientes Principales:** {', '.join(receta['ingredientes'][:5])}"
+                            f"🍳 **RECETA SUGERIDA:** {recetas[0]['nombre']}\n"
+                            f"🔥 **Calorías:** {recetas[0]['calorias']} kcal\n"
+                            f"🛒 **Ingredientes:** {', '.join(recetas[0]['ingredientes'][:5])}"
                         )
-                        texto_para_buscar = " ".join(receta['ingredientes'])
-                    else:
-                        # Fallback a dietas locales
-                        tipo = "vegana" if "VEGAN" in prompt.upper() else objetivo
-                        plan_local = DIETAS_BASE.get(tipo, DIETAS_BASE.get("perder_peso"))
-                        dieta_info = f"🏠 **PLAN LOCAL:** {plan_local.get('nombre')}\n💡 {plan_local.get('sugerencia')}"
-                        texto_para_buscar = plan_local.get('sugerencia', '')
-                except Exception as e:
-                    dieta_info = "Utiliza tu conocimiento nutricional general para proponer una dieta balanceada."
+                 except:
+                     pass
 
-            # --- D. MOTOR DE BÚSQUEDA DE PRECIOS OPTIMIZADO ---
-            # Pasamos tanto lo que dijo el usuario, como el texto de la dieta
-            contexto_precios = buscar_precios_reales(df_p, prompt, texto_para_buscar)
-
-            # --- E. RESPUESTA FINAL CON GPT-4o ---
-            # Construimos el sistema
+            # --- D. CONSTRUIR EL PROMPT FINAL ---
             try:
                 final_system = SYSTEM_ESTRATEGA.format(
                     nombre=nombre, 
@@ -232,15 +173,17 @@ if prompt := st.chat_input("Escribe aquí…", key="chat_nutripeso"):
             except:
                 final_system = f"Eres NutriPeso IA. Perfil: {nombre}, {int(cal_meta)} kcal, {objetivo}. Info Dieta: {dieta_info}"
             
-            # --- LA CLAVE PARA QUE NO INVENTE PRECIOS ---
-            final_system += f"\n\nCONTEXTO DE PRECIOS ACTUALES EXTRAÍDOS DE LA BASE DE DATOS:\n{contexto_precios}"
-            final_system += """\n\nREGLAS OBLIGATORIAS: 
-            1. Para la estrategia de compras, USA ÚNICAMENTE los precios proporcionados arriba.
-            2. NUNCA uses marcadores vacíos como '[Precio por porción]'. Usa los precios exactos (Ej. $45 MXN).
-            3. Si un ingrediente está en la lista de precios, incluye la marca/tipo exacto entre paréntesis (Ej: 'Yogur: $196 MXN (Fage Griego Natural)')."""
+            # Inyectamos los precios exactos si eligió algo
+            if productos_elegidos:
+                final_system += f"\n\nCONTEXTO DE PRECIOS EXACTOS (PRODUCTOS SELECCIONADOS POR EL USUARIO):\n{contexto_precios}"
+            
+            # Reglas estrictas para que no invente precios
+            final_system += """\n\nREGLAS OBLIGATORIAS DE COSTOS: 
+            1. Si te proporcioné una lista de "DATOS EXACTOS DE LA CANASTA", úsala OBLIGATORIAMENTE para calcular los costos del platillo.
+            2. NUNCA uses marcadores vacíos como '[Precio por porción]'. Usa los precios exactos (Ej. $45 MXN) que te di.
+            3. Si sugieres un ingrediente adicional que NO está en la lista de precios que te pasé, indica explícitamente '(Precio no disponible, estimar en mercado local)'."""
 
             try:
-                # OJO: Cambié a gpt-4o, puedes usar gpt-4o-mini si quieres que sea más barato
                 full_response = client.chat.completions.create(
                     model="gpt-4o", 
                     messages=[
@@ -252,11 +195,9 @@ if prompt := st.chat_input("Escribe aquí…", key="chat_nutripeso"):
 
                 answer = full_response.choices[0].message.content
                 st.write(answer)
-                
-                # Guardar en el historial
                 st.session_state.messages.append({"role": "assistant", "content": answer})
                 
             except Exception as e:
-                error_msg = f"Hubo un error al generar la respuesta: {e}"
+                error_msg = f"Hubo un error de conexión con la IA: {e}"
                 st.error(error_msg)
                 st.session_state.messages.append({"role": "assistant", "content": error_msg})
