@@ -96,7 +96,7 @@ def obtener_precios_seleccionados(df, productos_seleccionados):
 # -------------------------------------------------------------
 with st.sidebar:
     st.header("🏃 Mi Perfil Físico")
-    nombre = st.text_input("¿Cómo te llamas?", "Julio")
+    nombre = st.text_input("¿Cómo te llamas?", "")
 
     col_p, col_a = st.columns(2)
     with col_p:
