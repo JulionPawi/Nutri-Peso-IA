@@ -142,7 +142,7 @@ if prompt := st.chat_input("Escribe aquí…", key="chat_nutripeso"):
                     fecha_str = row['ds'].strftime('%Y-%m-%d')
                     contexto_precios += f"- {row['nombre_amigable']}: ${row['y']} MXN (Fecha: {fecha_str})\n"
             else:
-                contexto_precios = "No se encontraron coincidencias exactas en la base de precios local."
+                contexto_precios = "No hay coincidencias exactas, sugiere alternativas económicas basadas en la canasta básica general."
 
         # --- E. RESPUESTA FINAL CON GPT-4O ---
         # Construimos el sistema con toda la información recolectada
