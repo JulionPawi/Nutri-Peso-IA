@@ -3,9 +3,9 @@ import pandas as pd
 from openai import OpenAI
 import os
 from dotenv import load_dotenv
+from datetime import datetime
 
 # --- IMPORTACIONES DE ARCHIVOS LOCALES ---
-# NOTA: Quitamos las funciones de búsqueda viejas porque ahora usamos selección directa
 from calculators import calcular_mifflin_st_jeor, distribuir_macros
 from prompts import SYSTEM_CLASSIFIER, SYSTEM_ESTRATEGA
 from biblioteca_dietas import DIETAS_BASE
@@ -22,18 +22,14 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 def load_data():
     """Carga las bases de datos y extrae la lista de productos únicos."""
     try:
-        # 1. Cargar la base limpia
         df_p = pd.read_csv('CANASTA_BASICA_CON_ETIQUETAS.csv')
         df_p['ds'] = pd.to_datetime(df_p['ds'])
         
-        # 2. Cargar la otra base (si existe)
         try:
             df_n = pd.read_csv('ProductosMexicanos.csv')
         except:
             df_n = pd.DataFrame()
             
-        # 3. Obtener lista de productos únicos limpios y ordenados para el Dropdown
-        # Usamos la columna 'unique_id' que es la que tiene los nombres limpios
         lista_productos = sorted(df_p['unique_id'].dropna().unique().tolist())
             
         return df_p, df_n, lista_productos
@@ -43,27 +39,60 @@ def load_data():
 
 df_p, df_n, lista_productos_db = load_data()
 
-# --- FUNCIÓN DE PRECIOS EXACTOS ---
+# --- FUNCIÓN DE PRECIOS EXACTOS Y PRONÓSTICO ---
 def obtener_precios_seleccionados(df, productos_seleccionados):
-    """Filtra la base de datos para obtener el precio actual solo de lo que eligió el usuario."""
+    """Obtiene el precio actual, el pronóstico futuro y da recomendaciones de compra."""
     if not productos_seleccionados:
         return "El usuario no seleccionó productos de la base de datos."
         
-    # Usar la fecha más reciente para dar el precio actual
-    fecha_reciente = df['ds'].max()
-    df_actual = df[df['ds'] == fecha_reciente]
+    # 1. Definir "Hoy" (el mes actual) y "Futuro" (la fecha máxima en la base de datos)
+    hoy = pd.to_datetime(datetime.today().replace(day=1).strftime('%Y-%m-01'))
     
-    # Filtrar exactamente los productos que seleccionó en la interfaz
-    resultados = df_actual[df_actual['unique_id'].isin(productos_seleccionados)]
-    
-    texto_precios = "DATOS EXACTOS DE LA CANASTA SELECCIONADA POR EL USUARIO:\n"
-    for _, row in resultados.iterrows():
-        texto_precios += f"- {row['unique_id']}: ${row['y']:.2f} MXN (Unidad: {row['Unidad']})\n"
+    fechas_disponibles = df['ds'].unique()
+    if hoy not in fechas_disponibles:
+        fechas_pasadas = [f for f in fechas_disponibles if f <= hoy]
+        fecha_actual = max(fechas_pasadas) if fechas_pasadas else df['ds'].min()
+    else:
+        fecha_actual = hoy
         
+    fecha_futura = df['ds'].max()
+    meses_diferencia = (pd.to_datetime(fecha_futura).year - pd.to_datetime(fecha_actual).year) * 12 + (pd.to_datetime(fecha_futura).month - pd.to_datetime(fecha_actual).month)
+    
+    if meses_diferencia <= 0:
+        meses_diferencia = 1
+        
+    # 2. Extraer y comparar datos
+    df_seleccion = df[df['unique_id'].isin(productos_seleccionados)]
+    df_hoy = df_seleccion[df_seleccion['ds'] == fecha_actual]
+    df_futuro = df_seleccion[df_seleccion['ds'] == fecha_futura]
+    
+    texto_precios = f"DATOS DE LA CANASTA Y PRONÓSTICO A {meses_diferencia} MESES (ÚSALO PARA TU ESTRATEGIA):\n"
+    
+    for p in productos_seleccionados:
+        try:
+            precio_hoy = df_hoy[df_hoy['unique_id'] == p]['y'].values[0]
+            precio_fut = df_futuro[df_futuro['unique_id'] == p]['y'].values[0]
+            unidad = df_hoy[df_hoy['unique_id'] == p]['Unidad'].values[0]
+            
+            # Calcular la variación porcentual
+            cambio_pct = ((precio_fut - precio_hoy) / precio_hoy) * 100
+            
+            # Generar la recomendación matemática
+            if cambio_pct > 2.5:
+                recomendacion = "📈 TENDENCIA AL ALZA -> Sugerir compra al por mayor ahora y congelar/almacenar."
+            elif cambio_pct < -2.5:
+                recomendacion = "📉 TENDENCIA A LA BAJA -> Sugerir compra mes a mes (esperar a que baje el precio)."
+            else:
+                recomendacion = "⚖️ PRECIO ESTABLE -> Sugerir compra regular (solo lo que consumirá en la semana)."
+                
+            texto_precios += f"- {p}: Actual ${precio_hoy:.2f} | En {meses_diferencia} meses: ${precio_fut:.2f} | {recomendacion} (Unidad: {unidad})\n"
+        except IndexError:
+            pass
+            
     return texto_precios
 
 # -------------------------------------------------------------
-# 2. SIDEBAR – Perfil Nutricional y Canasta
+# 2. SIDEBAR – Perfil Nutricional y Canasta Inteligente
 # -------------------------------------------------------------
 with st.sidebar:
     st.header("🏃 Mi Perfil Físico")
@@ -91,17 +120,42 @@ with st.sidebar:
 
     st.markdown("---")
     st.success(f"🔥 Meta diaria: {int(cal_meta)} kcal")
-    st.write(f"Prot: {int(macros['proteina'])}g | Grasas: {int(macros['grasas'])}g | Carbs: {int(macros['carbs'])}g")
 
-    # --- NUEVA SECCIÓN: MULTISELECT DE PRODUCTOS ---
+    # --- NUEVA SECCIÓN: CANASTA INTELIGENTE (MULTISELECT + BULK ADD) ---
     st.markdown("---")
-    st.header("🛒 Mi Canasta")
-    st.write("¿Qué ingredientes tienes en casa o quieres cotizar?")
+    st.header("🛒 Mi Canasta Inteligente")
+    st.write("Agrega por palabra clave o selecciona uno por uno. (Máx 30)")
     
+    if "canasta_usuario" not in st.session_state:
+        st.session_state.canasta_usuario = []
+
+    def agregar_masivo():
+        termino = st.session_state.busqueda_rapida.strip().lower()
+        if termino:
+            coincidencias = [p for p in lista_productos_db if termino in p.lower()]
+            if coincidencias:
+                nuevos_productos = list(set(st.session_state.canasta_usuario + coincidencias))
+                if len(nuevos_productos) > 30:
+                    nuevos_productos = nuevos_productos[:30]
+                    st.toast("⚠️ Se alcanzó el límite máximo de 30 productos.", icon="🛑")
+                else:
+                    st.toast(f"✅ Se agregaron {len(coincidencias)} productos.", icon="🛒")
+                st.session_state.canasta_usuario = nuevos_productos
+            else:
+                st.toast("No se encontraron productos con esa palabra.", icon="❌")
+            st.session_state.busqueda_rapida = ""
+
+    st.text_input("🔍 Búsqueda rápida (Ej. Pollo, Aceite):", 
+                  key="busqueda_rapida", 
+                  on_change=agregar_masivo,
+                  help="Escribe un producto y presiona Enter para agregar todas sus variantes.")
+
     productos_elegidos = st.multiselect(
-        "Busca y selecciona:", 
+        "Edita o selecciona manualmente:", 
         options=lista_productos_db,
-        placeholder="Ej. Pechuga, Arroz, Huevo..."
+        key="canasta_usuario", 
+        max_selections=30,
+        placeholder="O busca uno por uno aquí..."
     )
 
 # -------------------------------------------------------------
@@ -113,7 +167,9 @@ if "messages" not in st.session_state:
     saludo = f"""¡Hola {nombre}! 👋 Soy **NutriPeso IA**.
 
 Tu meta ideal es de **{int(cal_meta)} kcal/día**. 
-Puedes pedirme una dieta general o **seleccionar productos en la barra lateral 👈** y pedirme que te arme una receta con el presupuesto exacto.
+Puedes pedirme una dieta general o **armar tu canasta en la barra lateral 👈** (puedes buscar palabras como 'Pollo' para agregar todos de golpe) y pedirme que te arme un plan.
+
+Además de los precios, te diré si **conviene comprar hoy y congelar, o esperar a que baje el precio** según el pronóstico del mercado. 📉📈
 
 ¿Qué cocinamos hoy? 🛒"""
     st.session_state.messages = [{"role": "assistant", "content": saludo}]
@@ -124,13 +180,13 @@ for msg in st.session_state.messages:
 # -------------------------------------------------------------
 # 4. LÓGICA UNIFICADA DEL CHAT
 # -------------------------------------------------------------
-if prompt := st.chat_input("Ej: Ármame una cena con lo que seleccioné...", key="chat_nutripeso"):
+if prompt := st.chat_input("Ej: Ármame una cena con lo que seleccioné y dime qué me conviene comprar al por mayor...", key="chat_nutripeso"):
     
     st.session_state.messages.append({"role": "user", "content": prompt})
     st.chat_message("user").write(prompt)
 
     with st.chat_message("assistant"):
-        with st.spinner("Analizando tus ingredientes y presupuesto..."):
+        with st.spinner("Analizando precios, pronósticos y armando tu plan..."):
             
             # --- A. CLASIFICACIÓN ---
             try:
@@ -142,11 +198,11 @@ if prompt := st.chat_input("Ej: Ármame una cena con lo que seleccioné...", key
             except Exception:
                 intent = "DIETA" 
 
-            # --- B. OBTENER PRECIOS EXACTOS DEL DROPDOWN ---
+            # --- B. OBTENER PRECIOS EXACTOS Y PRONÓSTICO DEL DROPDOWN ---
             contexto_precios = obtener_precios_seleccionados(df_p, productos_elegidos)
             
             # --- C. LÓGICA DE RECETAS ---
-            dieta_info = "Genera un plan basado en los ingredientes seleccionados o en la petición del usuario."
+            dieta_info = "Genera un plan basado en los ingredientes seleccionados y analiza los pronósticos."
             if not productos_elegidos and any(w in intent for w in ["DIETA", "COMER", "RECETA", "CENA"]):
                  try:
                     api_nutri = NutriAPI()
@@ -171,17 +227,15 @@ if prompt := st.chat_input("Ej: Ármame una cena con lo que seleccioné...", key
                     dieta_info=dieta_info
                 )
             except:
-                final_system = f"Eres NutriPeso IA. Perfil: {nombre}, {int(cal_meta)} kcal, {objetivo}. Info Dieta: {dieta_info}"
+                final_system = f"Eres NutriPeso IA. Perfil: {nombre}, {int(cal_meta)} kcal, {objetivo}."
             
-            # Inyectamos los precios exactos si eligió algo
             if productos_elegidos:
-                final_system += f"\n\nCONTEXTO DE PRECIOS EXACTOS (PRODUCTOS SELECCIONADOS POR EL USUARIO):\n{contexto_precios}"
+                final_system += f"\n\nCONTEXTO DE PRECIOS Y PRONÓSTICOS (CANASTA DEL USUARIO):\n{contexto_precios}"
             
-            # Reglas estrictas para que no invente precios
-            final_system += """\n\nREGLAS OBLIGATORIAS DE COSTOS: 
-            1. Si te proporcioné una lista de "DATOS EXACTOS DE LA CANASTA", úsala OBLIGATORIAMENTE para calcular los costos del platillo.
-            2. NUNCA uses marcadores vacíos como '[Precio por porción]'. Usa los precios exactos (Ej. $45 MXN) que te di.
-            3. Si sugieres un ingrediente adicional que NO está en la lista de precios que te pasé, indica explícitamente '(Precio no disponible, estimar en mercado local)'."""
+            final_system += """\n\nREGLAS OBLIGATORIAS DE COSTOS Y COMPRAS: 
+            1. Usa OBLIGATORIAMENTE los precios exactos que te proporcioné para calcular costos. NUNCA uses '[Precio por porción]'.
+            2. Muestra los precios usando este formato exacto: '$45.00 MXN'.
+            3. INCLUYE UNA SECCIÓN DE ESTRATEGIA DE COMPRAS: Revisa las alertas de "TENDENCIA AL ALZA" (📈) o "TENDENCIA A LA BAJA" (📉) en el contexto de precios. Aconseja al usuario qué productos debe comprar por mayoreo/congelar ahora mismo, y cuáles le conviene ir comprando mes a mes porque van a bajar de precio."""
 
             try:
                 full_response = client.chat.completions.create(
