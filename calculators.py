@@ -114,3 +114,54 @@ def buscador_inteligente_ia(query, dataframe, client):
     
     # 3. Retornamos solo los que la IA eligió
     return dataframe[dataframe['unique_id'].isin(seleccionados)]
+
+def cargar_precios_optimizados():
+    try:
+        # 1. Cargar tu archivo limpio
+        df = pd.read_csv('CANASTA_BASICA_CON_ETIQUETAS.csv')
+        
+        # 2. Filtrar por la fecha más reciente para dar precios actuales
+        fecha_reciente = df['ds'].max()
+        df_actual = df[df['ds'] == fecha_reciente]
+
+        # 3. Diccionario de búsqueda inteligente (Usamos palabras clave directas)
+        # La IA buscará CUALQUIERA de estas palabras en el nombre limpio
+        busquedas = {
+            "Pechuga de Pollo": ["Pechuga"],
+            "Arroz": ["Arroz"],
+            "Brócoli": ["Brocoli", "Brócoli"],
+            "Filete de Pescado (Mojarra/Tilapia/Atún)": ["Tilapia", "Mojarra", "Atún", "Atun"],
+            "Yogur Griego": ["Griego", "Fage", "Oikos"] # Ya no exigimos la palabra "Yogurt"
+        }
+
+        texto_precios = "BASE DE DATOS DE PRECIOS REALES (MXN):\n"
+
+        for producto, keywords in busquedas.items():
+            # Crear un patrón de búsqueda tipo "Palabra1|Palabra2" (OR)
+            patron = '|'.join(keywords)
+            mask = df_actual['unique_id'].str.contains(patron, case=False, na=False)
+            
+            # Filtro extra: si es Pechuga, evitar que traiga "Pechuga Cordon Blue" (congelados caros)
+            if producto == "Pechuga de Pollo":
+                mask &= ~df_actual['unique_id'].str.contains("Cordon", case=False, na=False)
+                
+            resultados = df_actual[mask]
+            
+            if not resultados.empty:
+                # Calcular el precio promedio de las variantes encontradas
+                precio_promedio = resultados['y'].mean()
+                
+                # Tomar el nombre del primer producto real encontrado como ejemplo
+                ejemplo_real = resultados['unique_id'].iloc[0]
+                
+                texto_precios += f"- {producto}: ${precio_promedio:.2f} por KG/Unidad (Recomienda: {ejemplo_real})\n"
+            else:
+                texto_precios += f"- {producto}: Precio no disponible (Estimar costo del mercado local)\n"
+        
+        return texto_precios
+
+    except Exception as e:
+        return f"Error leyendo base de datos: {e}"
+
+# --- PRUEBA RÁPIDA (Opcional, para que veas qué le manda a la IA) ---
+# print(cargar_precios_optimizados())
