@@ -84,7 +84,7 @@ for msg in st.session_state.messages:
 # -------------------------------------------------------------
 # 4. LÓGICA PRINCIPAL DEL CHAT
 # -------------------------------------------------------------
-if prompt := st.chat_input("Escribe aquí…"):
+if prompt := st.chat_input("Escribe aquí…", key="chat_nutripeso"):
     st.session_state.messages.append({"role": "user", "content": prompt})
     st.chat_message("user").write(prompt)
 
